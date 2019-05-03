@@ -14,6 +14,7 @@
 package helpers
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/gohugoio/hugo/hugofs"
@@ -37,7 +38,10 @@ func TestNewPathSpecFromConfig(t *testing.T) {
 	v.Set("staticDir", "thestatic")
 	v.Set("theme", "thetheme")
 
-	p, err := NewPathSpec(hugofs.NewMem(v), l)
+	fs := hugofs.NewMem(v)
+	fs.Source.MkdirAll(filepath.FromSlash("thework/thethemes/thetheme"), 0777)
+
+	p, err := NewPathSpec(fs, l)
 
 	require.NoError(t, err)
 	require.True(t, p.CanonifyURLs)

@@ -20,6 +20,8 @@ require (
 	github.com/fortytw2/leaktest v1.2.0
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/gobwas/glob v0.2.3
+	github.com/gohugoio/hugoTestHelpers/testmodBuilder/mods v0.0.0-20190517085018-8fa85d583cb0
+	github.com/gohugoio/testmodBuilder/mods v0.0.0-20190517094041-b98f3b2132ba
 	github.com/google/go-cmp v0.2.0
 	github.com/gorilla/websocket v1.4.0
 	github.com/hashicorp/go-immutable-radix v1.0.0
