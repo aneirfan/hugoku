@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gohugoio/hugo/modules"
+	"github.com/gohugoio/hugo/mods"
 
 	"github.com/gohugoio/hugo/parser/metadecoders"
 
@@ -450,8 +450,8 @@ func (l configLoader) loadThemeConfig(v1 *viper.Viper) ([]string, error) {
 	themes := config.GetStringSlicePreserveString(v1, "theme")
 
 	// TODO(bep) mod check that we do this once only
-	h := modules.New(l.Fs, l.WorkingDir, themesDir, themes)
-	themeConfig, err := h.Collect()
+	modsClient := mods.NewClient(l.Fs, l.WorkingDir, themesDir, themes)
+	themeConfig, err := modsClient.Collect()
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +482,7 @@ func (l configLoader) loadThemeConfig(v1 *viper.Viper) ([]string, error) {
 
 }
 
-func (l configLoader) applyThemeConfig(v1 *viper.Viper, theme modules.ThemeConfig) error {
+func (l configLoader) applyThemeConfig(v1 *viper.Viper, theme mods.ThemeConfig) error {
 
 	const (
 		paramsKey    = "params"

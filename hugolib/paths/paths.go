@@ -20,7 +20,7 @@ import (
 
 	"github.com/gohugoio/hugo/config"
 	"github.com/gohugoio/hugo/langs"
-	"github.com/gohugoio/hugo/modules"
+	"github.com/gohugoio/hugo/mods"
 	"github.com/pkg/errors"
 
 	"github.com/gohugoio/hugo/hugofs"
@@ -76,7 +76,7 @@ type Paths struct {
 	multilingual                   bool
 
 	themes    []string
-	AllThemes []modules.ThemeConfig
+	AllThemes []mods.ThemeConfig
 }
 
 func New(fs *hugofs.Fs, cfg config.Provider) (*Paths, error) {
@@ -178,11 +178,10 @@ func New(fs *hugofs.Fs, cfg config.Provider) (*Paths, error) {
 	}
 
 	if cfg.IsSet("allThemes") {
-		p.AllThemes = cfg.Get("allThemes").([]modules.ThemeConfig)
+		p.AllThemes = cfg.Get("allThemes").([]mods.ThemeConfig)
 	} else {
-		// TODO(bep) mod
-		h := modules.New(p.Fs.Source, p.WorkingDir, p.AbsPathify(p.ThemesDir), p.Themes())
-		tc, err := h.Collect()
+		modsc := mods.NewClient(p.Fs.Source, p.WorkingDir, p.AbsPathify(p.ThemesDir), p.Themes())
+		tc, err := modsc.Collect()
 		if err != nil {
 			return nil, err
 		}

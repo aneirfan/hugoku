@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package modules
+package mods
 
 import (
 	"bufio"
@@ -37,25 +37,19 @@ var (
 	fileSeparator = string(os.PathSeparator)
 )
 
-func New(
-	fs afero.Fs,
-	workingDir, themesDir string,
-	imports []string) *Handler {
+func NewClient(fs afero.Fs, workingDir, themesDir string, imports []string) *Client {
 
-	fn := filepath.Join(workingDir, goModFilename)
-
-	goModEnabled, _ := afero.Exists(fs, fn)
+	n := filepath.Join(workingDir, goModFilename)
+	goModEnabled, _ := afero.Exists(fs, n)
 	var goModFilename string
 	if goModEnabled {
-		goModFilename = fn
+		goModFilename = n
 	}
-	// Set GOPROXY to direct, which means "git clone" and similar. We
-	// will investigate proxy settings in more depth later.
-	// See https://github.com/golang/go/issues/26334
+
 	env := os.Environ()
 	setEnvVars(&env, "PWD", workingDir, "GOPROXY", getGoProxy())
 
-	return &Handler{
+	return &Client{
 		fs:                fs,
 		workingDir:        workingDir,
 		themesDir:         themesDir,
@@ -70,6 +64,10 @@ func getGoProxy() string {
 	if hp := os.Getenv(hugoModProxyEnvKey); hp != "" {
 		return hp
 	}
+
+	// Defaeult to direct, which means "git clone" and similar. We
+	// will investigate proxy settings in more depth later.
+	// See https://github.com/golang/go/issues/26334
 	return "direct"
 }
 
@@ -91,8 +89,8 @@ type ModuleError struct {
 	Err string // the error itself
 }
 
-// go mod download
-type Handler struct {
+// Client contains most of the API provided by this package.
+type Client struct {
 	fs afero.Fs
 
 	// Absolute path to the project dir.
@@ -126,7 +124,7 @@ const (
 	goBinaryStatusTooOld
 )
 
-func (m *Handler) Init(path string) error {
+func (m *Client) Init(path string) error {
 
 	err := m.runGo(context.Background(), os.Stdout, "mod", "init", path)
 	if err != nil {
@@ -138,7 +136,7 @@ func (m *Handler) Init(path string) error {
 	return nil
 }
 
-func (m *Handler) List() (Modules, error) {
+func (m *Client) List() (Modules, error) {
 	if m.GoModulesFilename == "" {
 		return nil, nil
 	}
@@ -152,7 +150,6 @@ func (m *Handler) List() (Modules, error) {
 	// for a more granular setting.
 	//  0555 directories
 	// TODO(bep) mod hugo mod init
-	// TODO(bep) mod go get -d (download)
 	// GO111MODULE=on
 	//
 
@@ -167,7 +164,6 @@ func (m *Handler) List() (Modules, error) {
 	}
 
 	b := &bytes.Buffer{}
-
 	err = m.runGo(context.Background(), b, "list", "-m", "-json", "all")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list modules")
@@ -192,21 +188,20 @@ func (m *Handler) List() (Modules, error) {
 
 }
 
-func (m *Handler) Get(args ...string) error {
-
+func (m *Client) Get(args ...string) error {
 	if err := m.runGo(context.Background(), os.Stdout, append([]string{"get"}, args...)...); err != nil {
 		errors.Wrapf(err, "failed to get %q", args)
 	}
-
 	return nil
 }
 
 // TODO(bep) mod probably filter this against imports? Also check replace.
-func (m *Handler) Graph() error {
+// TODO(bep) merge with _vendor + /theme
+func (m *Client) Graph() error {
 	return m.graph(os.Stdout)
 }
 
-func (m *Handler) graph(w io.Writer) error {
+func (m *Client) graph(w io.Writer) error {
 	if err := m.runGo(context.Background(), w, "mod", "graph"); err != nil {
 		errors.Wrapf(err, "failed to get graph")
 	}
@@ -214,7 +209,7 @@ func (m *Handler) graph(w io.Writer) error {
 	return nil
 }
 
-func (m *Handler) graphStr() (string, error) {
+func (m *Client) graphStr() (string, error) {
 	var b bytes.Buffer
 	err := m.graph(&b)
 	if err != nil {
@@ -223,7 +218,7 @@ func (m *Handler) graphStr() (string, error) {
 	return b.String(), nil
 }
 
-func (m *Handler) IsProbablyModule(path string) bool {
+func (m *Client) IsProbablyModule(path string) bool {
 	// Very simple for now.
 	return m.GoModulesFilename != "" && strings.Contains(path, "/")
 }
@@ -231,13 +226,18 @@ func (m *Handler) IsProbablyModule(path string) bool {
 // The "vendor" dir is reserved for Go Modules.
 const vendord = "_vendor"
 
-/*
-TODO(bep) mod
-https://github.com/thepudds/go-module-knobs/blob/master/README.md
-Esp see the file:
-
-The go tooling provides a fair amount of flexibility to adjust or disable these default behaviors, including via -mod=readonly, -mod=vendor, GOFLAGS, GOPROXY=off, GOPROXY=file:///filesystem/path, go mod vendor, and go mod download.
-*/
+// These are the folders we consider to be part of a module when we vendor
+// it.
+// TODO(bep) mod configurable...? regexp?
+var dirnames = map[string]bool{
+	"archetypes": true,
+	"assets":     true,
+	"data":       true,
+	"i18n":       true,
+	"layouts":    true,
+	"resources":  true,
+	"static":     true,
+}
 
 // Like Go, Hugo supports writing the dependencies to a /vendor folder.
 // Unlike Go, we support it for any level.
@@ -248,7 +248,7 @@ The go tooling provides a fair amount of flexibility to adjust or disable these 
 // Given a module tree, Hugo will pick the first module for a given path,
 // meaning that if the top-level module is vendored, that will be the full
 // set of dependencies.
-func (m *Handler) Vendor() error {
+func (m *Client) Vendor() error {
 	mods, err := m.List()
 	if err != nil {
 		return err
@@ -304,16 +304,14 @@ func (m *Handler) Vendor() error {
 		}
 
 		shouldCopy := func(filename string) bool {
-			// Vendoring the vendoring dirs would be wasteful.
-			// TODO(bep) mod node_modules etc? whitelist?
-			base := strings.TrimPrefix(filename, dir)
-			return !strings.HasPrefix(base, vendord)
+			base := filepath.Base(strings.TrimPrefix(filename, dir))
+			// Only vendor the root files + the predefined set of  folders.
+			return dirnames[base]
 		}
 
 		if err := hugio.CopyDir(m.fs, dir, filepath.Join(vendorDir, mod.Path), shouldCopy); err != nil {
 			return errors.Wrap(err, "failed to copy module to vendor dir")
 		}
-
 	}
 
 	if modulesContent.Len() > 0 {
@@ -325,7 +323,7 @@ func (m *Handler) Vendor() error {
 	return nil
 }
 
-func (m *Handler) Tidy() error {
+func (m *Client) Tidy() error {
 	tc, err := m.Collect()
 	if err != nil {
 		return err
@@ -375,7 +373,7 @@ const (
 	goSumFilename = "go.sum"
 )
 
-func (m *Handler) rewriteGoMod(name string, isGoMod map[string]bool) error {
+func (m *Client) rewriteGoMod(name string, isGoMod map[string]bool) error {
 	data, err := m.rewriteGoModRewrite(name, isGoMod)
 	if err != nil {
 		return err
@@ -390,7 +388,7 @@ func (m *Handler) rewriteGoMod(name string, isGoMod map[string]bool) error {
 	return nil
 }
 
-func (m *Handler) rewriteGoModRewrite(name string, isGoMod map[string]bool) ([]byte, error) {
+func (m *Client) rewriteGoModRewrite(name string, isGoMod map[string]bool) ([]byte, error) {
 	if name == goModFilename && m.GoModulesFilename == "" {
 		// Already checked.
 		return nil, nil
@@ -402,8 +400,7 @@ func (m *Handler) rewriteGoModRewrite(name string, isGoMod map[string]bool) ([]b
 
 	if name == goModFilename {
 		isModLine = func(s string) bool {
-			// TODO(bep) mod require github.com/bep/hugotestmods/myassets v1.0.4 // indirect
-			return strings.HasPrefix(s, "\t")
+			return strings.HasPrefix(s, "mod require") || strings.HasPrefix(s, "\t")
 		}
 	}
 
@@ -458,7 +455,7 @@ func (m *Handler) rewriteGoModRewrite(name string, isGoMod map[string]bool) ([]b
 
 }
 
-func (m *Handler) runGo(
+func (m *Client) runGo(
 	ctx context.Context,
 	stdout io.Writer,
 	args ...string) error {

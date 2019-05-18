@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package modules
+package mods
 
 import (
 	"bufio"
@@ -39,6 +39,8 @@ type ThemeConfig struct {
 	Dir string
 
 	// Optional configuration filename (e.g. "/themes/mytheme/config.json").
+	// This will be added to the special configuration watch list when in
+	// server mode.
 	ConfigFilename string
 
 	// Optional config read from the ConfigFile above.
@@ -47,7 +49,7 @@ type ThemeConfig struct {
 
 // Collects and creates a module tree.
 type collector struct {
-	*Handler
+	*Client
 
 	*collected
 }
@@ -240,13 +242,13 @@ type ThemesConfig struct {
 	GoModulesFilename string
 }
 
-func (h *Handler) Collect() (ThemesConfig, error) {
+func (h *Client) Collect() (ThemesConfig, error) {
 	if len(h.imports) == 0 {
 		return ThemesConfig{}, nil
 	}
 
 	c := &collector{
-		Handler: h,
+		Client: h,
 	}
 
 	if err := c.collect(); err != nil {

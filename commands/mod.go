@@ -20,7 +20,7 @@ import (
 
 	"github.com/gohugoio/hugo/hugofs"
 
-	"github.com/gohugoio/hugo/modules"
+	"github.com/gohugoio/hugo/mods"
 	"github.com/spf13/cobra"
 )
 
@@ -47,7 +47,7 @@ func newModCmd() *modCmd {
 			Short: "TODO(bep)",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				if len(args) >= 1 {
-					return c.getModulesHandler(nil).Get(args[0])
+					return c.newModsClient(nil).Get(args[0])
 				}
 
 				// Collect any modules defined in config.toml
@@ -60,7 +60,9 @@ func newModCmd() *modCmd {
 			Use:   "graph",
 			Short: "TODO(bep)",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return c.getModulesHandler(nil).Graph()
+				return c.withModsClient(func(c *mods.Client) error {
+					return c.Graph()
+				})
 			},
 		},
 		&cobra.Command{
@@ -71,29 +73,27 @@ func newModCmd() *modCmd {
 				if len(args) >= 1 {
 					path = args[0]
 				}
-				return c.getModulesHandler(nil).Init(path)
+				return c.withModsClient(func(c *mods.Client) error {
+					return c.Init(path)
+				})
 			},
 		},
 		&cobra.Command{
 			Use:   "vendor",
 			Short: "TODO(bep)",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				com, err := c.initConfig()
-				if err != nil {
-					return err
-				}
-				return c.getModulesHandler(com.Cfg).Vendor()
+				return c.withModsClient(func(c *mods.Client) error {
+					return c.Vendor()
+				})
 			},
 		},
 		&cobra.Command{
 			Use:   "tidy",
 			Short: "TODO(bep)",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				com, err := c.initConfig()
-				if err != nil {
-					return err
-				}
-				return c.getModulesHandler(com.Cfg).Tidy()
+				return c.withModsClient(func(c *mods.Client) error {
+					return c.Tidy()
+				})
 			},
 		},
 	)
@@ -104,6 +104,15 @@ func newModCmd() *modCmd {
 
 }
 
+func (c *modCmd) withModsClient(f func(*mods.Client) error) error {
+	com, err := c.initConfig()
+	if err != nil {
+		return err
+	}
+	client := c.newModsClient(com.Cfg)
+	return f(client)
+}
+
 func (c *modCmd) initConfig() (*commandeer, error) {
 	com, err := initializeConfig(true, false, &c.hugoBuilderCommon, c, nil)
 	if err != nil {
@@ -112,7 +121,7 @@ func (c *modCmd) initConfig() (*commandeer, error) {
 	return com, nil
 }
 
-func (c *modCmd) getModulesHandler(cfg config.Provider) *modules.Handler {
+func (c *modCmd) newModsClient(cfg config.Provider) *mods.Client {
 	var (
 		workingDir string
 		themesDir  string
@@ -131,6 +140,5 @@ func (c *modCmd) getModulesHandler(cfg config.Provider) *modules.Handler {
 		themes = cfg.GetStringSlice("theme")
 	}
 
-	fs := hugofs.Os
-	return modules.New(fs, workingDir, themesDir, themes)
+	return mods.NewClient(hugofs.Os, workingDir, themesDir, themes)
 }

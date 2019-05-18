@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package modules
+package mods
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ func TestModules(t *testing.T) {
 
 	dir := "/Users/bep/sites/hugomod/my-modular-site"
 
-	m := &Handler{
+	m := &Client{
 		workingDir: dir,
 	}
 
