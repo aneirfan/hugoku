@@ -27,15 +27,14 @@ import (
 )
 
 type ThemeConfig struct {
-	// The theme name as set in the configuration.
 	// This maps either to a folder below /themes or
 	// to a Go module Path.
-	Name string
+	Path string
 
 	// Set if the source lives in a Go module.
-	Module *Module
+	Module *GoModule
 
-	// The absolute path to this theme.
+	// Directory holding files for this module.
 	Dir string
 
 	// Optional configuration filename (e.g. "/themes/mytheme/config.json").
@@ -43,7 +42,7 @@ type ThemeConfig struct {
 	// server mode.
 	ConfigFilename string
 
-	// Optional config read from the ConfigFile above.
+	// Optional config read from the ConfigFilename above.
 	Cfg config.Provider
 }
 
@@ -111,11 +110,12 @@ func (c *collector) loadModules() error {
 	if err != nil {
 		return err
 	}
-	c.modules = modules
+	c.gomods = modules
 	return nil
 }
 
 type collected struct {
+	// Pick the first and prevent circular loops.
 	seen map[string]bool
 
 	// Maps module path to a _vendor dir. These values are fetched from
@@ -123,9 +123,11 @@ type collected struct {
 	vendored map[string]string
 
 	// Set if a Go modules enabled project.
-	modules Modules
+	gomods GoModules
 
-	themes []ThemeConfig
+	// Ordered list of collected modules, including Go Modules and theme
+	// components stored below /themes.
+	modules Modules
 }
 
 // TODO(bep) mod:
@@ -155,34 +157,35 @@ func (c *collector) addAndRecurse(dir string, themes ...string) error {
 	return nil
 }
 
-func (c *collector) add(dir, name string) (ThemeConfig, error) {
+func (c *collector) add(dir, modulePath string) (ThemeConfig, error) {
 	var tc ThemeConfig
-	var mod *Module
+	var mod *GoModule
 
 	if err := c.collectModulesTXT(dir); err != nil {
 		return ThemeConfig{}, err
 	}
 
 	// Try _vendor first.
-	moduleDir := c.getVendoredDir(name)
+	moduleDir := c.getVendoredDir(modulePath)
+	vendored := moduleDir != ""
 
 	if moduleDir == "" {
-		mod = c.modules.GetByPath(name)
+		mod = c.gomods.GetByPath(modulePath)
 		if mod != nil {
 			moduleDir = mod.Dir
 		}
 
 		if moduleDir == "" {
-			if c.GoModulesFilename != "" && c.IsProbablyModule(name) {
+			if c.GoModulesFilename != "" && c.IsProbablyModule(modulePath) {
 				// Try to "go get" it and reload the module configuration.
-				if err := c.Get(name); err != nil {
+				if err := c.Get(modulePath); err != nil {
 					return ThemeConfig{}, err
 				}
 				if err := c.loadModules(); err != nil {
 					return ThemeConfig{}, err
 				}
 
-				mod = c.modules.GetByPath(name)
+				mod = c.gomods.GetByPath(modulePath)
 				if mod != nil {
 					moduleDir = mod.Dir
 				}
@@ -190,9 +193,9 @@ func (c *collector) add(dir, name string) (ThemeConfig, error) {
 
 			// Fall back to /themes/<mymodule>
 			if moduleDir == "" {
-				moduleDir = filepath.Join(c.themesDir, name)
+				moduleDir = filepath.Join(c.themesDir, modulePath)
 				if found, _ := afero.Exists(c.fs, moduleDir); !found {
-					return ThemeConfig{}, c.wrapModuleNotFound(errors.Errorf("module %q not found; either add it as a Hugo Module or store it in %q.", name, c.themesDir))
+					return ThemeConfig{}, c.wrapModuleNotFound(errors.Errorf("module %q not found; either add it as a Hugo Module or store it in %q.", modulePath, c.themesDir))
 				}
 			}
 		}
@@ -202,17 +205,24 @@ func (c *collector) add(dir, name string) (ThemeConfig, error) {
 		return ThemeConfig{}, c.wrapModuleNotFound(errors.Errorf("%q not found", moduleDir))
 	}
 
-	tc = ThemeConfig{
-		Name:   name,
-		Dir:    moduleDir,
-		Module: mod,
+	if !strings.HasSuffix(moduleDir, fileSeparator) {
+		moduleDir += fileSeparator
 	}
 
-	if err := c.applyThemeConfig(&tc); err != nil {
+	ma := &moduleAdapter{
+		dir:    moduleDir,
+		vendor: vendored,
+		gomod:  mod,
+	}
+	if mod == nil {
+		ma.path = modulePath
+	}
+
+	if err := c.applyThemeConfig(ma); err != nil {
 		return tc, err
 	}
 
-	c.themes = append(c.themes, tc)
+	c.modules = append(c.modules, ma)
 	return tc, nil
 
 }
@@ -235,16 +245,16 @@ func (c *collector) wrapModuleNotFound(err error) error {
 
 }
 
-type ThemesConfig struct {
-	Themes []ThemeConfig
+type ModulesConfig struct {
+	Modules Modules
 
 	// Set if this is a Go modules enabled project.
 	GoModulesFilename string
 }
 
-func (h *Client) Collect() (ThemesConfig, error) {
+func (h *Client) Collect() (ModulesConfig, error) {
 	if len(h.imports) == 0 {
-		return ThemesConfig{}, nil
+		return ModulesConfig{}, nil
 	}
 
 	c := &collector{
@@ -252,11 +262,11 @@ func (h *Client) Collect() (ThemesConfig, error) {
 	}
 
 	if err := c.collect(); err != nil {
-		return ThemesConfig{}, err
+		return ModulesConfig{}, err
 	}
 
-	return ThemesConfig{
-		Themes:            c.themes,
+	return ModulesConfig{
+		Modules:           c.modules,
 		GoModulesFilename: c.GoModulesFilename,
 	}, nil
 
@@ -276,7 +286,7 @@ func (c *collector) collect() error {
 	return nil
 }
 
-func (c *collector) applyThemeConfig(tc *ThemeConfig) error {
+func (c *collector) applyThemeConfig(tc *moduleAdapter) error {
 
 	var (
 		configFilename string
@@ -286,7 +296,7 @@ func (c *collector) applyThemeConfig(tc *ThemeConfig) error {
 
 	// Viper supports more, but this is the sub-set supported by Hugo.
 	for _, configFormats := range config.ValidConfigFileExtensions {
-		configFilename = filepath.Join(tc.Dir, "config."+configFormats)
+		configFilename = filepath.Join(tc.Dir(), "config."+configFormats)
 		exists, _ = afero.Exists(c.fs, configFilename)
 		if exists {
 			break
@@ -306,8 +316,8 @@ func (c *collector) applyThemeConfig(tc *ThemeConfig) error {
 		}
 	}
 
-	tc.ConfigFilename = configFilename
-	tc.Cfg = cfg
+	tc.configFilename = configFilename
+	tc.cfg = cfg
 
 	return nil
 

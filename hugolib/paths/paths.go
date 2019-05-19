@@ -76,7 +76,7 @@ type Paths struct {
 	multilingual                   bool
 
 	themes    []string
-	AllThemes []mods.ThemeConfig
+	AllThemes mods.Modules
 }
 
 func New(fs *hugofs.Fs, cfg config.Provider) (*Paths, error) {
@@ -178,14 +178,14 @@ func New(fs *hugofs.Fs, cfg config.Provider) (*Paths, error) {
 	}
 
 	if cfg.IsSet("allThemes") {
-		p.AllThemes = cfg.Get("allThemes").([]mods.ThemeConfig)
+		p.AllThemes = cfg.Get("allThemes").(mods.Modules)
 	} else {
 		modsc := mods.NewClient(p.Fs.Source, p.WorkingDir, p.AbsPathify(p.ThemesDir), p.Themes())
 		tc, err := modsc.Collect()
 		if err != nil {
 			return nil, err
 		}
-		p.AllThemes = tc.Themes
+		p.AllThemes = tc.Modules
 
 	}
 

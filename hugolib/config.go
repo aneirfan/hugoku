@@ -456,14 +456,14 @@ func (l configLoader) loadThemeConfig(v1 *viper.Viper) ([]string, error) {
 		return nil, err
 	}
 
-	if len(themeConfig.Themes) == 0 {
+	if len(themeConfig.Modules) == 0 {
 		return nil, nil
 	}
 
-	v1.Set("allThemes", themeConfig.Themes)
+	v1.Set("allThemes", themeConfig.Modules)
 
 	var configFilenames []string
-	for _, tc := range themeConfig.Themes {
+	for _, tc := range themeConfig.Modules {
 		if tc.ConfigFilename != "" {
 			configFilenames = append(configFilenames, tc.ConfigFilename)
 			if err := l.applyThemeConfig(v1, tc); err != nil {
@@ -496,7 +496,7 @@ func (l configLoader) applyThemeConfig(v1 *viper.Viper, theme mods.ThemeConfig) 
 		l.mergeStringMapKeepLeft("", key, v1, v2)
 	}
 
-	themeLower := strings.ToLower(theme.Name)
+	themeLower := strings.ToLower(theme.Path)
 	themeParamsNamespace := paramsKey + "." + themeLower
 
 	// Set namespaced params

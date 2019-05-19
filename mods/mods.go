@@ -71,13 +71,13 @@ func getGoProxy() string {
 	return "direct"
 }
 
-type Module struct {
+type GoModule struct {
 	Path     string       // module path
 	Version  string       // module version
 	Versions []string     // available module versions (with -versions)
-	Replace  *Module      // replaced by this module
+	Replace  *GoModule    // replaced by this module
 	Time     *time.Time   // time version was created
-	Update   *Module      // available update, if any (with -u)
+	Update   *GoModule    // available update, if any (with -u)
 	Main     bool         // is this the main module?
 	Indirect bool         // is this module only an indirect dependency of main module?
 	Dir      string       // directory holding files for this module, if any
@@ -136,7 +136,7 @@ func (m *Client) Init(path string) error {
 	return nil
 }
 
-func (m *Client) List() (Modules, error) {
+func (m *Client) List() (GoModules, error) {
 	if m.GoModulesFilename == "" {
 		return nil, nil
 	}
@@ -169,11 +169,11 @@ func (m *Client) List() (Modules, error) {
 		return nil, errors.Wrap(err, "failed to list modules")
 	}
 
-	var modules Modules
+	var modules GoModules
 
 	dec := json.NewDecoder(b)
 	for {
-		m := &Module{}
+		m := &GoModule{}
 		if err := dec.Decode(m); err != nil {
 			if err == io.EOF {
 				break
@@ -257,7 +257,7 @@ func (m *Client) Vendor() error {
 	// TODO(bep) mod delete existing vendor
 	// TODO(bep) check exsting modules dir without modules.txt
 
-	var mainModule *Module
+	var mainModule *GoModule
 	for _, mod := range mods {
 		if mod.Main {
 			mainModule = mod
@@ -288,20 +288,15 @@ func (m *Client) Vendor() error {
 
 	vendorDir := filepath.Join(m.workingDir, vendord)
 
-	for _, t := range tc.Themes {
-		mod := t.Module
-
-		if mod == nil {
+	for _, t := range tc.Modules {
+		if !t.IsGoMod() {
 			// TODO(bep) mod consider /themes
 			continue
 		}
 
-		fmt.Fprintln(&modulesContent, "# "+mod.Path+" "+mod.Version)
+		fmt.Fprintln(&modulesContent, "# "+t.Path()+" "+t.Version())
 
-		dir := mod.Dir
-		if !strings.HasSuffix(dir, fileSeparator) {
-			dir += fileSeparator
-		}
+		dir := t.Dir()
 
 		shouldCopy := func(filename string) bool {
 			base := filepath.Base(strings.TrimPrefix(filename, dir))
@@ -309,7 +304,7 @@ func (m *Client) Vendor() error {
 			return dirnames[base]
 		}
 
-		if err := hugio.CopyDir(m.fs, dir, filepath.Join(vendorDir, mod.Path), shouldCopy); err != nil {
+		if err := hugio.CopyDir(m.fs, dir, filepath.Join(vendorDir, t.Path()), shouldCopy); err != nil {
 			return errors.Wrap(err, "failed to copy module to vendor dir")
 		}
 	}
@@ -330,11 +325,10 @@ func (m *Client) Tidy() error {
 	}
 
 	isGoMod := make(map[string]bool)
-	for _, m := range tc.Themes {
-		// TODO(bep) mod consider making everything a Module and add a Pseudo flag.
-		if m.Module != nil {
+	for _, m := range tc.Modules {
+		if m.IsGoMod() {
 			// Matching the format in go.mod
-			isGoMod[m.Name+" "+m.Module.Version] = true
+			isGoMod[m.Path()+" "+m.Version()] = true
 		}
 	}
 
@@ -427,6 +421,7 @@ func (m *Client) rewriteGoModRewrite(name string, isGoMod map[string]bool) ([]by
 			if modname == "" {
 				doWrite = true
 			} else {
+				// TODO(bep) mod: mod require
 				parts := strings.Fields(modname)
 				if len(parts) >= 2 {
 					// [module path] [version]/go.mod
@@ -496,9 +491,9 @@ func (m *Client) runGo(
 	return nil
 }
 
-type Modules []*Module
+type GoModules []*GoModule
 
-func (modules Modules) GetByPath(p string) *Module {
+func (modules GoModules) GetByPath(p string) *GoModule {
 	if modules == nil {
 		return nil
 	}
