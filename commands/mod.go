@@ -67,7 +67,7 @@ func newModCmd() *modCmd {
 		},
 		&cobra.Command{
 			Use:   "init",
-			Short: "TODO(bep)",
+			Short: "TODO(bep) ",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				var path string
 				if len(args) >= 1 {
