@@ -86,7 +86,7 @@ func (c *collector) getVendoredDir(path string) string {
 }
 
 func (c *collector) loadModules() error {
-	modules, err := c.List()
+	modules, err := c.listGoMods()
 	if err != nil {
 		return err
 	}

@@ -31,7 +31,7 @@ func TestModules(t *testing.T) {
 		workingDir: dir,
 	}
 
-	mods, err := m.List()
+	mods, err := m.listGoMods()
 	assert.NoError(err)
 
 	fmt.Println("MODS:", mods)

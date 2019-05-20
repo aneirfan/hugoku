@@ -136,7 +136,7 @@ func (m *Client) Init(path string) error {
 	return nil
 }
 
-func (m *Client) List() (goModules, error) {
+func (m *Client) listGoMods() (goModules, error) {
 	if m.GoModulesFilename == "" {
 		return nil, nil
 	}
@@ -146,8 +146,6 @@ func (m *Client) List() (goModules, error) {
 	// TODO(bep) mount at all of partials/ partials/v1  partials/v2 or something.
 	// TODO(bep) rm: public/images/logos/made-with-bulma.png: Permission denied
 	// TODO(bep) watch pkg cache?
-	// TODO(bep) consider adding a setting for GOPATH to control cache dir. Check
-	// for a more granular setting.
 	//  0555 directories
 	// TODO(bep) mod hugo mod init
 	// GO111MODULE=on
@@ -252,26 +250,10 @@ var dirnames = map[string]bool{
 // Given a module tree, Hugo will pick the first module for a given path,
 // meaning that if the top-level module is vendored, that will be the full
 // set of dependencies.
-func (m *Client) Vendor() error {
-	mods, err := m.List()
-	if err != nil {
+func (c *Client) Vendor() error {
+	vendorDir := filepath.Join(c.workingDir, vendord)
+	if err := c.rmVendorDir(vendorDir); err != nil {
 		return err
-	}
-
-	// TODO(bep) mod delete existing vendor
-	// TODO(bep) check exsting modules dir without modules.txt
-
-	var mainModule *goModule
-	for _, mod := range mods {
-		if mod.Main {
-			mainModule = mod
-			break
-		}
-	}
-
-	// TODO(bep) mod overlay on module level
-	if mainModule == nil {
-		return errors.New("vendor: main module not found")
 	}
 
 	// Write the modules list to modules.txt.
@@ -285,12 +267,10 @@ func (m *Client) Vendor() error {
 	//
 	var modulesContent bytes.Buffer
 
-	tc, err := m.Collect()
+	tc, err := c.Collect()
 	if err != nil {
 		return err
 	}
-
-	vendorDir := filepath.Join(m.workingDir, vendord)
 
 	for _, t := range tc.Modules {
 		if !t.IsGoMod() {
@@ -309,18 +289,35 @@ func (m *Client) Vendor() error {
 			return base != "_vendor" //dirnames[base]
 		}
 
-		if err := hugio.CopyDir(m.fs, dir, filepath.Join(vendorDir, t.Path()), shouldCopy); err != nil {
+		if err := hugio.CopyDir(c.fs, dir, filepath.Join(vendorDir, t.Path()), shouldCopy); err != nil {
 			return errors.Wrap(err, "failed to copy module to vendor dir")
 		}
 	}
 
 	if modulesContent.Len() > 0 {
-		if err := afero.WriteFile(m.fs, filepath.Join(vendorDir, vendorModulesFilename), modulesContent.Bytes(), 0666); err != nil {
+		if err := afero.WriteFile(c.fs, filepath.Join(vendorDir, vendorModulesFilename), modulesContent.Bytes(), 0666); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func (c *Client) rmVendorDir(vendorDir string) error {
+	modulestxt := filepath.Join(vendorDir, vendorModulesFilename)
+
+	if _, err := c.fs.Stat(vendorDir); err != nil {
+		return nil
+	}
+
+	_, err := c.fs.Stat(modulestxt)
+	if err != nil {
+		// If we have a _vendor dir without modules.txt it sounds like
+		// a _vendor dir created by others.
+		return errors.New("found _vendor dir without modules.txt, skip delete")
+	}
+
+	return c.fs.RemoveAll(vendorDir)
 }
 
 func (m *Client) Tidy() error {
