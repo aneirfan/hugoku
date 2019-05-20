@@ -61,7 +61,7 @@ func newModCmd() *modCmd {
 			Short: "TODO(bep)",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				return c.withModsClient(func(c *mods.Client) error {
-					return c.Graph()
+					return c.Graph(os.Stdout)
 				})
 			},
 		},

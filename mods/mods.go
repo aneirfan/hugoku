@@ -71,13 +71,13 @@ func getGoProxy() string {
 	return "direct"
 }
 
-type GoModule struct {
+type goModule struct {
 	Path     string       // module path
 	Version  string       // module version
 	Versions []string     // available module versions (with -versions)
-	Replace  *GoModule    // replaced by this module
+	Replace  *goModule    // replaced by this module
 	Time     *time.Time   // time version was created
-	Update   *GoModule    // available update, if any (with -u)
+	Update   *goModule    // available update, if any (with -u)
 	Main     bool         // is this the main module?
 	Indirect bool         // is this module only an indirect dependency of main module?
 	Dir      string       // directory holding files for this module, if any
@@ -136,7 +136,7 @@ func (m *Client) Init(path string) error {
 	return nil
 }
 
-func (m *Client) List() (GoModules, error) {
+func (m *Client) List() (goModules, error) {
 	if m.GoModulesFilename == "" {
 		return nil, nil
 	}
@@ -169,11 +169,11 @@ func (m *Client) List() (GoModules, error) {
 		return nil, errors.Wrap(err, "failed to list modules")
 	}
 
-	var modules GoModules
+	var modules goModules
 
 	dec := json.NewDecoder(b)
 	for {
-		m := &GoModule{}
+		m := &goModule{}
 		if err := dec.Decode(m); err != nil {
 			if err == io.EOF {
 				break
@@ -197,25 +197,29 @@ func (m *Client) Get(args ...string) error {
 
 // TODO(bep) mod probably filter this against imports? Also check replace.
 // TODO(bep) merge with _vendor + /theme
-func (m *Client) Graph() error {
-	return m.graph(os.Stdout)
-}
+func (m *Client) Graph(w io.Writer) error {
+	mc, err := m.Collect()
+	if err != nil {
+		return err
+	}
+	for _, module := range mc.Modules {
+		// sourcegraph.com/sourcegraph/go-diff@v0.5.0 github.com/gogo/protobuf@v1.1.1
+		fmt.Fprintln(w, pathVersion(module.Owner())+" "+pathVersion(module))
 
-func (m *Client) graph(w io.Writer) error {
-	if err := m.runGo(context.Background(), w, "mod", "graph"); err != nil {
-		errors.Wrapf(err, "failed to get graph")
 	}
 
 	return nil
 }
 
-func (m *Client) graphStr() (string, error) {
-	var b bytes.Buffer
-	err := m.graph(&b)
-	if err != nil {
-		return "", err
+func pathVersion(m Module) string {
+	versionStr := m.Version()
+	if m.Vendor() {
+		versionStr = "vendor"
 	}
-	return b.String(), nil
+	if versionStr == "" {
+		return m.Path()
+	}
+	return fmt.Sprintf("%s@%s", m.Path(), versionStr)
 }
 
 func (m *Client) IsProbablyModule(path string) bool {
@@ -257,7 +261,7 @@ func (m *Client) Vendor() error {
 	// TODO(bep) mod delete existing vendor
 	// TODO(bep) check exsting modules dir without modules.txt
 
-	var mainModule *GoModule
+	var mainModule *goModule
 	for _, mod := range mods {
 		if mod.Main {
 			mainModule = mod
@@ -301,7 +305,8 @@ func (m *Client) Vendor() error {
 		shouldCopy := func(filename string) bool {
 			base := filepath.Base(strings.TrimPrefix(filename, dir))
 			// Only vendor the root files + the predefined set of  folders.
-			return dirnames[base]
+			// TODO(bep) rework this whitelist idea.
+			return base != "_vendor" //dirnames[base]
 		}
 
 		if err := hugio.CopyDir(m.fs, dir, filepath.Join(vendorDir, t.Path()), shouldCopy); err != nil {
@@ -491,15 +496,25 @@ func (m *Client) runGo(
 	return nil
 }
 
-type GoModules []*GoModule
+type goModules []*goModule
 
-func (modules GoModules) GetByPath(p string) *GoModule {
+func (modules goModules) GetByPath(p string) *goModule {
 	if modules == nil {
 		return nil
 	}
 
 	for _, m := range modules {
 		if strings.EqualFold(p, m.Path) {
+			return m
+		}
+	}
+
+	return nil
+}
+
+func (modules goModules) GetMain() *goModule {
+	for _, m := range modules {
+		if m.Main {
 			return m
 		}
 	}

@@ -26,26 +26,6 @@ import (
 	"github.com/spf13/cast"
 )
 
-type ThemeConfig struct {
-	// This maps either to a folder below /themes or
-	// to a Go module Path.
-	Path string
-
-	// Set if the source lives in a Go module.
-	Module *GoModule
-
-	// Directory holding files for this module.
-	Dir string
-
-	// Optional configuration filename (e.g. "/themes/mytheme/config.json").
-	// This will be added to the special configuration watch list when in
-	// server mode.
-	ConfigFilename string
-
-	// Optional config read from the ConfigFilename above.
-	Cfg config.Provider
-}
-
 // Collects and creates a module tree.
 type collector struct {
 	*Client
@@ -123,7 +103,7 @@ type collected struct {
 	vendored map[string]string
 
 	// Set if a Go modules enabled project.
-	gomods GoModules
+	gomods goModules
 
 	// Ordered list of collected modules, including Go Modules and theme
 	// components stored below /themes.
@@ -141,11 +121,11 @@ func (c *collector) isSeen(theme string) bool {
 	return false
 }
 
-func (c *collector) addAndRecurse(dir string, themes ...string) error {
+func (c *collector) addAndRecurse(owner Module, themes ...string) error {
 	for i := 0; i < len(themes); i++ {
 		theme := themes[i]
 		if !c.isSeen(theme) {
-			tc, err := c.add(dir, theme)
+			tc, err := c.add(owner, theme)
 			if err != nil {
 				return err
 			}
@@ -157,12 +137,11 @@ func (c *collector) addAndRecurse(dir string, themes ...string) error {
 	return nil
 }
 
-func (c *collector) add(dir, modulePath string) (ThemeConfig, error) {
-	var tc ThemeConfig
-	var mod *GoModule
+func (c *collector) add(owner Module, modulePath string) (Module, error) {
+	var mod *goModule
 
-	if err := c.collectModulesTXT(dir); err != nil {
-		return ThemeConfig{}, err
+	if err := c.collectModulesTXT(owner.Dir()); err != nil {
+		return nil, err
 	}
 
 	// Try _vendor first.
@@ -179,10 +158,10 @@ func (c *collector) add(dir, modulePath string) (ThemeConfig, error) {
 			if c.GoModulesFilename != "" && c.IsProbablyModule(modulePath) {
 				// Try to "go get" it and reload the module configuration.
 				if err := c.Get(modulePath); err != nil {
-					return ThemeConfig{}, err
+					return nil, err
 				}
 				if err := c.loadModules(); err != nil {
-					return ThemeConfig{}, err
+					return nil, err
 				}
 
 				mod = c.gomods.GetByPath(modulePath)
@@ -195,14 +174,14 @@ func (c *collector) add(dir, modulePath string) (ThemeConfig, error) {
 			if moduleDir == "" {
 				moduleDir = filepath.Join(c.themesDir, modulePath)
 				if found, _ := afero.Exists(c.fs, moduleDir); !found {
-					return ThemeConfig{}, c.wrapModuleNotFound(errors.Errorf("module %q not found; either add it as a Hugo Module or store it in %q.", modulePath, c.themesDir))
+					return nil, c.wrapModuleNotFound(errors.Errorf("module %q not found; either add it as a Hugo Module or store it in %q.", modulePath, c.themesDir))
 				}
 			}
 		}
 	}
 
 	if found, _ := afero.Exists(c.fs, moduleDir); !found {
-		return ThemeConfig{}, c.wrapModuleNotFound(errors.Errorf("%q not found", moduleDir))
+		return nil, c.wrapModuleNotFound(errors.Errorf("%q not found", moduleDir))
 	}
 
 	if !strings.HasSuffix(moduleDir, fileSeparator) {
@@ -213,17 +192,20 @@ func (c *collector) add(dir, modulePath string) (ThemeConfig, error) {
 		dir:    moduleDir,
 		vendor: vendored,
 		gomod:  mod,
+		// TODO(bep) mod when vendor the owner must point to the one with
+		// the _vendor dir?
+		owner: owner,
 	}
 	if mod == nil {
 		ma.path = modulePath
 	}
 
 	if err := c.applyThemeConfig(ma); err != nil {
-		return tc, err
+		return nil, err
 	}
 
 	c.modules = append(c.modules, ma)
-	return tc, nil
+	return ma, nil
 
 }
 
@@ -277,8 +259,21 @@ func (c *collector) collect() error {
 		return err
 	}
 
+	// Create a pseudo module for the main project.
+	var path string
+	gomod := c.gomods.GetMain()
+	if gomod == nil {
+		path = "project"
+	}
+
+	projectMod := &moduleAdapter{
+		path:  path,
+		dir:   c.workingDir,
+		gomod: gomod,
+	}
+
 	for _, imp := range c.imports {
-		if err := c.addAndRecurse(c.workingDir, imp); err != nil {
+		if err := c.addAndRecurse(projectMod, imp); err != nil {
 			return err
 		}
 	}
@@ -323,16 +318,16 @@ func (c *collector) applyThemeConfig(tc *moduleAdapter) error {
 
 }
 
-func (c *collector) addThemeNamesFromTheme(theme ThemeConfig) error {
-	if theme.Cfg != nil && theme.Cfg.IsSet("theme") {
-		v := theme.Cfg.Get("theme")
+func (c *collector) addThemeNamesFromTheme(module Module) error {
+	if module.Cfg() != nil && module.Cfg().IsSet("theme") {
+		v := module.Cfg().Get("theme")
 		switch vv := v.(type) {
 		case []string:
-			return c.addAndRecurse(theme.Dir, vv...)
+			return c.addAndRecurse(module, vv...)
 		case []interface{}:
-			return c.addAndRecurse(theme.Dir, cast.ToStringSlice(vv)...)
+			return c.addAndRecurse(module, cast.ToStringSlice(vv)...)
 		default:
-			return c.addAndRecurse(theme.Dir, cast.ToString(vv))
+			return c.addAndRecurse(module, cast.ToString(vv))
 		}
 	}
 

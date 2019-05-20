@@ -483,11 +483,11 @@ func (b *sourceFilesystemsBuilder) createRootMappingFs(dirKey, themeFolder strin
 	// TODO(bep) mod clean up this Dir mess
 	for _, theme := range b.p.AllThemes {
 		//to := b.p.AbsPathify(filepath.Join(b.p.ThemesDir, theme.Name, themeFolder))
-		to := filepath.Join(theme.Dir, themeFolder)
+		to := filepath.Join(theme.Dir(), themeFolder)
 		if b.existsInSource(to) {
 			s.Dirnames = append(s.Dirnames, to)
 			from := theme
-			fromTo = append(fromTo, from.Name, to)
+			fromTo = append(fromTo, from.Path(), to)
 		}
 	}
 
@@ -713,7 +713,7 @@ func createThemesOverlayFs(p *paths.Paths) (afero.Fs, []string, error) {
 	// overlay logic below working as expected.
 	for i := 0; i < len(themes); i++ {
 		theme := themes[len(themes)-1-i]
-		absPaths[i] = theme.Dir
+		absPaths[i] = theme.Dir()
 	}
 
 	fs, err := createOverlayFs(p.Fs.Source, absPaths)

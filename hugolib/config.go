@@ -464,8 +464,8 @@ func (l configLoader) loadThemeConfig(v1 *viper.Viper) ([]string, error) {
 
 	var configFilenames []string
 	for _, tc := range themeConfig.Modules {
-		if tc.ConfigFilename != "" {
-			configFilenames = append(configFilenames, tc.ConfigFilename)
+		if tc.ConfigFilename() != "" {
+			configFilenames = append(configFilenames, tc.ConfigFilename())
 			if err := l.applyThemeConfig(v1, tc); err != nil {
 				return nil, err
 			}
@@ -482,7 +482,7 @@ func (l configLoader) loadThemeConfig(v1 *viper.Viper) ([]string, error) {
 
 }
 
-func (l configLoader) applyThemeConfig(v1 *viper.Viper, theme mods.ThemeConfig) error {
+func (l configLoader) applyThemeConfig(v1 *viper.Viper, theme mods.Module) error {
 
 	const (
 		paramsKey    = "params"
@@ -490,13 +490,13 @@ func (l configLoader) applyThemeConfig(v1 *viper.Viper, theme mods.ThemeConfig) 
 		menuKey      = "menus"
 	)
 
-	v2 := theme.Cfg
+	v2 := theme.Cfg()
 
 	for _, key := range []string{paramsKey, "outputformats", "mediatypes"} {
 		l.mergeStringMapKeepLeft("", key, v1, v2)
 	}
 
-	themeLower := strings.ToLower(theme.Path)
+	themeLower := strings.ToLower(theme.Path())
 	themeParamsNamespace := paramsKey + "." + themeLower
 
 	// Set namespaced params

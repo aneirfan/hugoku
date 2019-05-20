@@ -56,7 +56,7 @@ type moduleAdapter struct {
 	dir  string
 
 	// Set if a Go module.
-	gomod *GoModule
+	gomod *goModule
 
 	// May be set for all.
 	vendor         bool
