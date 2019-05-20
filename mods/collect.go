@@ -26,72 +26,33 @@ import (
 	"github.com/spf13/cast"
 )
 
-// Collects and creates a module tree.
-type collector struct {
-	*Client
-
-	*collected
-}
-
-func (c *collector) initModules() error {
-	c.collected = &collected{
-		seen:     make(map[string]bool),
-		vendored: make(map[string]string),
-	}
-
-	// We may fail later if we don't find the mods.
-	return c.loadModules()
-}
-
 const vendorModulesFilename = "modules.txt"
 
-func (c *collector) collectModulesTXT(dir string) error {
-	vendorDir := filepath.Join(dir, vendord)
-	filename := filepath.Join(vendorDir, vendorModulesFilename)
-
-	f, err := c.fs.Open(filename)
-
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-
-		return err
+func (h *Client) Collect() (ModulesConfig, error) {
+	if len(h.imports) == 0 {
+		return ModulesConfig{}, nil
 	}
 
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-
-	for scanner.Scan() {
-		// # github.com/alecthomas/chroma v0.6.3
-		line := scanner.Text()
-		line = strings.Trim(line, "# ")
-		line = strings.TrimSpace(line)
-		parts := strings.Fields(line)
-		if len(parts) != 2 {
-			return errors.Errorf("invalid modules list: %q", filename)
-		}
-		path := parts[0]
-		if _, found := c.vendored[path]; !found {
-			c.vendored[path] = filepath.Join(vendorDir, path)
-		}
-
+	c := &collector{
+		Client: h,
 	}
-	return nil
+
+	if err := c.collect(); err != nil {
+		return ModulesConfig{}, err
+	}
+
+	return ModulesConfig{
+		Modules:           c.modules,
+		GoModulesFilename: c.GoModulesFilename,
+	}, nil
+
 }
 
-func (c *collector) getVendoredDir(path string) string {
-	return c.vendored[path]
-}
+type ModulesConfig struct {
+	Modules Modules
 
-func (c *collector) loadModules() error {
-	modules, err := c.listGoMods()
-	if err != nil {
-		return err
-	}
-	c.gomods = modules
-	return nil
+	// Set if this is a Go modules enabled project.
+	GoModulesFilename string
 }
 
 type collected struct {
@@ -110,6 +71,23 @@ type collected struct {
 	modules Modules
 }
 
+// Collects and creates a module tree.
+type collector struct {
+	*Client
+
+	*collected
+}
+
+func (c *collector) initModules() error {
+	c.collected = &collected{
+		seen:     make(map[string]bool),
+		vendored: make(map[string]string),
+	}
+
+	// We may fail later if we don't find the mods.
+	return c.loadModules()
+}
+
 // TODO(bep) mod:
 // - no-vendor
 func (c *collector) isSeen(theme string) bool {
@@ -121,20 +99,8 @@ func (c *collector) isSeen(theme string) bool {
 	return false
 }
 
-func (c *collector) addAndRecurse(owner Module, themes ...string) error {
-	for i := 0; i < len(themes); i++ {
-		theme := themes[i]
-		if !c.isSeen(theme) {
-			tc, err := c.add(owner, theme)
-			if err != nil {
-				return err
-			}
-			if err := c.addThemeNamesFromTheme(tc); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+func (c *collector) getVendoredDir(path string) string {
+	return c.vendored[path]
 }
 
 func (c *collector) add(owner Module, modulePath string) (Module, error) {
@@ -209,72 +175,32 @@ func (c *collector) add(owner Module, modulePath string) (Module, error) {
 
 }
 
-func (c *collector) wrapModuleNotFound(err error) error {
-	if c.GoModulesFilename == "" {
-		return err
+func (c *collector) addAndRecurse(owner Module, themes ...string) error {
+	for i := 0; i < len(themes); i++ {
+		theme := themes[i]
+		if !c.isSeen(theme) {
+			tc, err := c.add(owner, theme)
+			if err != nil {
+				return err
+			}
+			if err := c.addThemeNamesFromTheme(tc); err != nil {
+				return err
+			}
+		}
 	}
-
-	baseMsg := "we found a go.mod file in your project, but"
-
-	switch c.goBinaryStatus {
-	case goBinaryStatusNotFound:
-		return errors.Wrap(err, baseMsg+" you need to install Go to use it. See https://golang.org/dl/.")
-	case goBinaryStatusTooOld:
-		return errors.Wrap(err, baseMsg+" you need to a newer version of Go to use it. See https://golang.org/dl/.")
-	}
-
-	return err
-
+	return nil
 }
 
-type ModulesConfig struct {
-	Modules Modules
-
-	// Set if this is a Go modules enabled project.
-	GoModulesFilename string
-}
-
-func (h *Client) Collect() (ModulesConfig, error) {
-	if len(h.imports) == 0 {
-		return ModulesConfig{}, nil
-	}
-
-	c := &collector{
-		Client: h,
-	}
-
-	if err := c.collect(); err != nil {
-		return ModulesConfig{}, err
-	}
-
-	return ModulesConfig{
-		Modules:           c.modules,
-		GoModulesFilename: c.GoModulesFilename,
-	}, nil
-
-}
-
-func (c *collector) collect() error {
-	if err := c.initModules(); err != nil {
-		return err
-	}
-
-	// Create a pseudo module for the main project.
-	var path string
-	gomod := c.gomods.GetMain()
-	if gomod == nil {
-		path = "project"
-	}
-
-	projectMod := &moduleAdapter{
-		path:  path,
-		dir:   c.workingDir,
-		gomod: gomod,
-	}
-
-	for _, imp := range c.imports {
-		if err := c.addAndRecurse(projectMod, imp); err != nil {
-			return err
+func (c *collector) addThemeNamesFromTheme(module Module) error {
+	if module.Cfg() != nil && module.Cfg().IsSet("theme") {
+		v := module.Cfg().Get("theme")
+		switch vv := v.(type) {
+		case []string:
+			return c.addAndRecurse(module, vv...)
+		case []interface{}:
+			return c.addAndRecurse(module, cast.ToStringSlice(vv)...)
+		default:
+			return c.addAndRecurse(module, cast.ToString(vv))
 		}
 	}
 
@@ -318,18 +244,92 @@ func (c *collector) applyThemeConfig(tc *moduleAdapter) error {
 
 }
 
-func (c *collector) addThemeNamesFromTheme(module Module) error {
-	if module.Cfg() != nil && module.Cfg().IsSet("theme") {
-		v := module.Cfg().Get("theme")
-		switch vv := v.(type) {
-		case []string:
-			return c.addAndRecurse(module, vv...)
-		case []interface{}:
-			return c.addAndRecurse(module, cast.ToStringSlice(vv)...)
-		default:
-			return c.addAndRecurse(module, cast.ToString(vv))
+func (c *collector) collect() error {
+	if err := c.initModules(); err != nil {
+		return err
+	}
+
+	// Create a pseudo module for the main project.
+	var path string
+	gomod := c.gomods.GetMain()
+	if gomod == nil {
+		path = "project"
+	}
+
+	projectMod := &moduleAdapter{
+		path:  path,
+		dir:   c.workingDir,
+		gomod: gomod,
+	}
+
+	for _, imp := range c.imports {
+		if err := c.addAndRecurse(projectMod, imp); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+func (c *collector) collectModulesTXT(dir string) error {
+	vendorDir := filepath.Join(dir, vendord)
+	filename := filepath.Join(vendorDir, vendorModulesFilename)
+
+	f, err := c.fs.Open(filename)
+
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
+		return err
+	}
+
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+
+	for scanner.Scan() {
+		// # github.com/alecthomas/chroma v0.6.3
+		line := scanner.Text()
+		line = strings.Trim(line, "# ")
+		line = strings.TrimSpace(line)
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			return errors.Errorf("invalid modules list: %q", filename)
+		}
+		path := parts[0]
+		if _, found := c.vendored[path]; !found {
+			c.vendored[path] = filepath.Join(vendorDir, path)
+		}
+
+	}
+	return nil
+}
+
+func (c *collector) loadModules() error {
+	modules, err := c.listGoMods()
+	if err != nil {
+		return err
+	}
+	c.gomods = modules
+	return nil
+}
+
+func (c *collector) wrapModuleNotFound(err error) error {
+	if c.GoModulesFilename == "" {
+		return err
+	}
+
+	baseMsg := "we found a go.mod file in your project, but"
+
+	switch c.goBinaryStatus {
+	case goBinaryStatusNotFound:
+		return errors.Wrap(err, baseMsg+" you need to install Go to use it. See https://golang.org/dl/.")
+	case goBinaryStatusTooOld:
+		return errors.Wrap(err, baseMsg+" you need to a newer version of Go to use it. See https://golang.org/dl/.")
+	}
+
+	return err
+
 }

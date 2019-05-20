@@ -37,6 +37,35 @@ var (
 	fileSeparator = string(os.PathSeparator)
 )
 
+const hugoModProxyEnvKey = "HUGO_MODPROXY"
+
+const (
+	goBinaryStatusOK goBinaryStatus = iota
+	goBinaryStatusNotFound
+	goBinaryStatusTooOld
+)
+
+// The "vendor" dir is reserved for Go Modules.
+const vendord = "_vendor"
+
+// These are the folders we consider to be part of a module when we vendor
+// it.
+// TODO(bep) mod configurable...? regexp?
+var dirnames = map[string]bool{
+	"archetypes": true,
+	"assets":     true,
+	"data":       true,
+	"i18n":       true,
+	"layouts":    true,
+	"resources":  true,
+	"static":     true,
+}
+
+const (
+	goModFilename = "go.mod"
+	goSumFilename = "go.sum"
+)
+
 func NewClient(fs afero.Fs, workingDir, themesDir string, imports []string) *Client {
 
 	n := filepath.Join(workingDir, goModFilename)
@@ -56,37 +85,6 @@ func NewClient(fs afero.Fs, workingDir, themesDir string, imports []string) *Cli
 		imports:           imports,
 		environ:           env,
 		GoModulesFilename: goModFilename}
-}
-
-const hugoModProxyEnvKey = "HUGO_MODPROXY"
-
-func getGoProxy() string {
-	if hp := os.Getenv(hugoModProxyEnvKey); hp != "" {
-		return hp
-	}
-
-	// Defaeult to direct, which means "git clone" and similar. We
-	// will investigate proxy settings in more depth later.
-	// See https://github.com/golang/go/issues/26334
-	return "direct"
-}
-
-type goModule struct {
-	Path     string       // module path
-	Version  string       // module version
-	Versions []string     // available module versions (with -versions)
-	Replace  *goModule    // replaced by this module
-	Time     *time.Time   // time version was created
-	Update   *goModule    // available update, if any (with -u)
-	Main     bool         // is this the main module?
-	Indirect bool         // is this module only an indirect dependency of main module?
-	Dir      string       // directory holding files for this module, if any
-	GoMod    string       // path to go.mod file for this module, if any
-	Error    *ModuleError // error loading module
-}
-
-type ModuleError struct {
-	Err string // the error itself
 }
 
 // Client contains most of the API provided by this package.
@@ -116,83 +114,6 @@ type Client struct {
 	goBinaryStatus goBinaryStatus
 }
 
-type goBinaryStatus int
-
-const (
-	goBinaryStatusOK goBinaryStatus = iota
-	goBinaryStatusNotFound
-	goBinaryStatusTooOld
-)
-
-func (m *Client) Init(path string) error {
-
-	err := m.runGo(context.Background(), os.Stdout, "mod", "init", path)
-	if err != nil {
-		return errors.Wrap(err, "failed to init modules")
-	}
-
-	m.GoModulesFilename = filepath.Join(m.workingDir, goModFilename)
-
-	return nil
-}
-
-func (m *Client) listGoMods() (goModules, error) {
-	if m.GoModulesFilename == "" {
-		return nil, nil
-	}
-	///
-	// TODO(bep) mod check permissions
-	// TODO(bep) mod clear cache
-	// TODO(bep) mount at all of partials/ partials/v1  partials/v2 or something.
-	// TODO(bep) rm: public/images/logos/made-with-bulma.png: Permission denied
-	// TODO(bep) watch pkg cache?
-	//  0555 directories
-	// TODO(bep) mod hugo mod init
-	// GO111MODULE=on
-	//
-
-	// TODO(bep) mod --no-vendor flag (also on hugo)
-	// TODO(bep) mod hugo mod vendor: --no-local
-	// GOCACHE
-
-	out := ioutil.Discard
-	err := m.runGo(context.Background(), out, "mod", "download")
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to download modules")
-	}
-
-	b := &bytes.Buffer{}
-	err = m.runGo(context.Background(), b, "list", "-m", "-json", "all")
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list modules")
-	}
-
-	var modules goModules
-
-	dec := json.NewDecoder(b)
-	for {
-		m := &goModule{}
-		if err := dec.Decode(m); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, errors.Wrap(err, "failed to decode modules list")
-		}
-
-		modules = append(modules, m)
-	}
-
-	return modules, err
-
-}
-
-func (m *Client) Get(args ...string) error {
-	if err := m.runGo(context.Background(), os.Stdout, append([]string{"get"}, args...)...); err != nil {
-		errors.Wrapf(err, "failed to get %q", args)
-	}
-	return nil
-}
-
 // TODO(bep) mod probably filter this against imports? Also check replace.
 // TODO(bep) merge with _vendor + /theme
 func (m *Client) Graph(w io.Writer) error {
@@ -209,36 +130,72 @@ func (m *Client) Graph(w io.Writer) error {
 	return nil
 }
 
-func pathVersion(m Module) string {
-	versionStr := m.Version()
-	if m.Vendor() {
-		versionStr = "vendor"
+func (m *Client) Tidy() error {
+	tc, err := m.Collect()
+	if err != nil {
+		return err
 	}
-	if versionStr == "" {
-		return m.Path()
+
+	isGoMod := make(map[string]bool)
+	for _, m := range tc.Modules {
+		if m.IsGoMod() {
+			// Matching the format in go.mod
+			isGoMod[m.Path()+" "+m.Version()] = true
+		}
 	}
-	return fmt.Sprintf("%s@%s", m.Path(), versionStr)
+
+	if err := m.rewriteGoMod(goModFilename, isGoMod); err != nil {
+		return err
+	}
+
+	// Now go.mod contains only in-use modules. The go.sum file will
+	// contain the entire dependency graph, so we need to check against that.
+	// TODO(bep) check if needed
+	/*graph, err := m.graphStr()
+	if err != nil {
+		return err
+	}
+
+	isGoMod = make(map[string]bool)
+	graphItems := strings.Split(graph, "\n")
+	for _, item := range graphItems {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		modver := strings.Replace(strings.Fields(item)[1], "@", " ", 1)
+		isGoMod[modver] = true
+	}*/
+
+	if err := m.rewriteGoMod(goSumFilename, isGoMod); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *Client) Get(args ...string) error {
+	if err := m.runGo(context.Background(), os.Stdout, append([]string{"get"}, args...)...); err != nil {
+		errors.Wrapf(err, "failed to get %q", args)
+	}
+	return nil
+}
+
+func (m *Client) Init(path string) error {
+
+	err := m.runGo(context.Background(), os.Stdout, "mod", "init", path)
+	if err != nil {
+		return errors.Wrap(err, "failed to init modules")
+	}
+
+	m.GoModulesFilename = filepath.Join(m.workingDir, goModFilename)
+
+	return nil
 }
 
 func (m *Client) IsProbablyModule(path string) bool {
 	// Very simple for now.
 	return m.GoModulesFilename != "" && strings.Contains(path, "/")
-}
-
-// The "vendor" dir is reserved for Go Modules.
-const vendord = "_vendor"
-
-// These are the folders we consider to be part of a module when we vendor
-// it.
-// TODO(bep) mod configurable...? regexp?
-var dirnames = map[string]bool{
-	"archetypes": true,
-	"assets":     true,
-	"data":       true,
-	"i18n":       true,
-	"layouts":    true,
-	"resources":  true,
-	"static":     true,
 }
 
 // Like Go, Hugo supports writing the dependencies to a /vendor folder.
@@ -303,71 +260,55 @@ func (c *Client) Vendor() error {
 	return nil
 }
 
-func (c *Client) rmVendorDir(vendorDir string) error {
-	modulestxt := filepath.Join(vendorDir, vendorModulesFilename)
-
-	if _, err := c.fs.Stat(vendorDir); err != nil {
-		return nil
+func (m *Client) listGoMods() (goModules, error) {
+	if m.GoModulesFilename == "" {
+		return nil, nil
 	}
+	///
+	// TODO(bep) mod check permissions
+	// TODO(bep) mod clear cache
+	// TODO(bep) mount at all of partials/ partials/v1  partials/v2 or something.
+	// TODO(bep) rm: public/images/logos/made-with-bulma.png: Permission denied
+	// TODO(bep) watch pkg cache?
+	//  0555 directories
+	// TODO(bep) mod hugo mod init
+	// GO111MODULE=on
+	//
 
-	_, err := c.fs.Stat(modulestxt)
+	// TODO(bep) mod --no-vendor flag (also on hugo)
+	// TODO(bep) mod hugo mod vendor: --no-local
+	// GOCACHE
+
+	out := ioutil.Discard
+	err := m.runGo(context.Background(), out, "mod", "download")
 	if err != nil {
-		// If we have a _vendor dir without modules.txt it sounds like
-		// a _vendor dir created by others.
-		return errors.New("found _vendor dir without modules.txt, skip delete")
+		return nil, errors.Wrap(err, "failed to download modules")
 	}
 
-	return c.fs.RemoveAll(vendorDir)
-}
-
-func (m *Client) Tidy() error {
-	tc, err := m.Collect()
+	b := &bytes.Buffer{}
+	err = m.runGo(context.Background(), b, "list", "-m", "-json", "all")
 	if err != nil {
-		return err
+		return nil, errors.Wrap(err, "failed to list modules")
 	}
 
-	isGoMod := make(map[string]bool)
-	for _, m := range tc.Modules {
-		if m.IsGoMod() {
-			// Matching the format in go.mod
-			isGoMod[m.Path()+" "+m.Version()] = true
+	var modules goModules
+
+	dec := json.NewDecoder(b)
+	for {
+		m := &goModule{}
+		if err := dec.Decode(m); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, errors.Wrap(err, "failed to decode modules list")
 		}
+
+		modules = append(modules, m)
 	}
 
-	if err := m.rewriteGoMod(goModFilename, isGoMod); err != nil {
-		return err
-	}
+	return modules, err
 
-	// Now go.mod contains only in-use modules. The go.sum file will
-	// contain the entire dependency graph, so we need to check against that.
-	// TODO(bep) check if needed
-	/*graph, err := m.graphStr()
-	if err != nil {
-		return err
-	}
-
-	isGoMod = make(map[string]bool)
-	graphItems := strings.Split(graph, "\n")
-	for _, item := range graphItems {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		modver := strings.Replace(strings.Fields(item)[1], "@", " ", 1)
-		isGoMod[modver] = true
-	}*/
-
-	if err := m.rewriteGoMod(goSumFilename, isGoMod); err != nil {
-		return err
-	}
-
-	return nil
 }
-
-const (
-	goModFilename = "go.mod"
-	goSumFilename = "go.sum"
-)
 
 func (m *Client) rewriteGoMod(name string, isGoMod map[string]bool) error {
 	data, err := m.rewriteGoModRewrite(name, isGoMod)
@@ -452,6 +393,23 @@ func (m *Client) rewriteGoModRewrite(name string, isGoMod map[string]bool) ([]by
 
 }
 
+func (c *Client) rmVendorDir(vendorDir string) error {
+	modulestxt := filepath.Join(vendorDir, vendorModulesFilename)
+
+	if _, err := c.fs.Stat(vendorDir); err != nil {
+		return nil
+	}
+
+	_, err := c.fs.Stat(modulestxt)
+	if err != nil {
+		// If we have a _vendor dir without modules.txt it sounds like
+		// a _vendor dir created by others.
+		return errors.New("found _vendor dir without modules.txt, skip delete")
+	}
+
+	return c.fs.RemoveAll(vendorDir)
+}
+
 func (m *Client) runGo(
 	ctx context.Context,
 	stdout io.Writer,
@@ -491,6 +449,26 @@ func (m *Client) runGo(
 	}
 
 	return nil
+}
+
+type ModuleError struct {
+	Err string // the error itself
+}
+
+type goBinaryStatus int
+
+type goModule struct {
+	Path     string       // module path
+	Version  string       // module version
+	Versions []string     // available module versions (with -versions)
+	Replace  *goModule    // replaced by this module
+	Time     *time.Time   // time version was created
+	Update   *goModule    // available update, if any (with -u)
+	Main     bool         // is this the main module?
+	Indirect bool         // is this module only an indirect dependency of main module?
+	Dir      string       // directory holding files for this module, if any
+	GoMod    string       // path to go.mod file for this module, if any
+	Error    *ModuleError // error loading module
 }
 
 type goModules []*goModule
@@ -534,4 +512,26 @@ func setEnvVars(oldVars *[]string, keyValues ...string) {
 	for i := 0; i < len(keyValues); i += 2 {
 		setEnvVar(oldVars, keyValues[i], keyValues[i+1])
 	}
+}
+
+func getGoProxy() string {
+	if hp := os.Getenv(hugoModProxyEnvKey); hp != "" {
+		return hp
+	}
+
+	// Defaeult to direct, which means "git clone" and similar. We
+	// will investigate proxy settings in more depth later.
+	// See https://github.com/golang/go/issues/26334
+	return "direct"
+}
+
+func pathVersion(m Module) string {
+	versionStr := m.Version()
+	if m.Vendor() {
+		versionStr = "vendor"
+	}
+	if versionStr == "" {
+		return m.Path()
+	}
+	return fmt.Sprintf("%s@%s", m.Path(), versionStr)
 }

@@ -17,38 +17,47 @@ import (
 	"github.com/gohugoio/hugo/config"
 )
 
+var _ Module = (*moduleAdapter)(nil)
+
+type Config struct {
+	// Decode: support :default =>
+	// ^assets$|
+	IncludeDirs string
+}
+
 type Module interface {
-	// Returns the path to this module.
-	// This will either be the module path, e.g. "github.com/gohugoio/myshortcodes",
-	// or the path below your /theme folder, e.g. "mytheme".
-	Path() string
 
-	// Directory holding files for this module.
-	Dir() string
-
-	// Returns whether Dir points below the _vendor dir.
-	Vendor() bool
-
-	// Returns whether this is a Go Module.
-	IsGoMod() bool
-
-	// The module version, "none" if not applicable.
-	Version() string
-
-	// In the dependency tree, this is the first module that defines this module
-	// as a dependency.
-	Owner() Module
+	// Optional config read from the configFilename above.
+	Cfg() config.Provider
 
 	// Optional configuration filename (e.g. "/themes/mytheme/config.json").
 	// This will be added to the special configuration watch list when in
 	// server mode.
 	ConfigFilename() string
 
-	// Optional config read from the configFilename above.
-	Cfg() config.Provider
+	// Directory holding files for this module.
+	Dir() string
+
+	// Returns whether this is a Go Module.
+	IsGoMod() bool
+
+	// In the dependency tree, this is the first module that defines this module
+	// as a dependency.
+	Owner() Module
+
+	// Returns the path to this module.
+	// This will either be the module path, e.g. "github.com/gohugoio/myshortcodes",
+	// or the path below your /theme folder, e.g. "mytheme".
+	Path() string
+
+	// Returns whether Dir points below the _vendor dir.
+	Vendor() bool
+
+	// The module version, "none" if not applicable.
+	Version() string
 }
 
-var _ Module = (*moduleAdapter)(nil)
+type Modules []Module
 
 type moduleAdapter struct {
 	// Set if not a Go module.
@@ -65,11 +74,12 @@ type moduleAdapter struct {
 	cfg            config.Provider
 }
 
-func (m *moduleAdapter) Path() string {
-	if m.gomod != nil {
-		return m.gomod.Path
-	}
-	return m.path
+func (m *moduleAdapter) Cfg() config.Provider {
+	return m.cfg
+}
+
+func (m *moduleAdapter) ConfigFilename() string {
+	return m.configFilename
 }
 
 func (m *moduleAdapter) Dir() string {
@@ -77,12 +87,23 @@ func (m *moduleAdapter) Dir() string {
 	return m.dir
 }
 
-func (m *moduleAdapter) Vendor() bool {
-	return m.vendor
-}
-
 func (m *moduleAdapter) IsGoMod() bool {
 	return m.gomod != nil
+}
+
+func (m *moduleAdapter) Owner() Module {
+	return m.owner
+}
+
+func (m *moduleAdapter) Path() string {
+	if m.gomod != nil {
+		return m.gomod.Path
+	}
+	return m.path
+}
+
+func (m *moduleAdapter) Vendor() bool {
+	return m.vendor
 }
 
 func (m *moduleAdapter) Version() string {
@@ -90,24 +111,4 @@ func (m *moduleAdapter) Version() string {
 		return m.gomod.Version
 	}
 	return "none"
-}
-
-func (m *moduleAdapter) Owner() Module {
-	return m.owner
-}
-
-func (m *moduleAdapter) ConfigFilename() string {
-	return m.configFilename
-}
-
-func (m *moduleAdapter) Cfg() config.Provider {
-	return m.cfg
-}
-
-type Modules []Module
-
-type Config struct {
-	// Decode: support :default =>
-	// ^assets$|
-	IncludeDirs string
 }
