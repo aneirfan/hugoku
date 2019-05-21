@@ -63,7 +63,7 @@ type collected struct {
 
 	// Maps module path to a _vendor dir. These values are fetched from
 	// _vendor/modules.txt, and the first (top-most) will win.
-	vendored map[string]string
+	vendored map[string]vendoredModule
 
 	// Set if a Go modules enabled project.
 	gomods goModules
@@ -80,10 +80,15 @@ type collector struct {
 	*collected
 }
 
+type vendoredModule struct {
+	Dir     string
+	Version string
+}
+
 func (c *collector) initModules() error {
 	c.collected = &collected{
 		seen:     make(map[string]bool),
-		vendored: make(map[string]string),
+		vendored: make(map[string]vendoredModule),
 	}
 
 	// We may fail later if we don't find the mods.
@@ -101,9 +106,13 @@ func (c *collector) isSeen(path string) bool {
 	return false
 }
 
-func (c *collector) getVendoredDir(path string) string {
-	return c.vendored[path]
+func (c *collector) getVendoredDir(path string) (vendoredModule, bool) {
+	v, found := c.vendored[path]
+	return v, found
 }
+
+// TODO(bep) mod
+const zeroVersion = ""
 
 func (c *collector) add(owner Module, modulePath string) (Module, error) {
 	var mod *goModule
@@ -112,9 +121,13 @@ func (c *collector) add(owner Module, modulePath string) (Module, error) {
 		return nil, err
 	}
 
+	var moduleDir string
+
 	// Try _vendor first.
-	moduleDir := c.getVendoredDir(modulePath)
-	vendored := moduleDir != ""
+	vendoredModule, vendored := c.getVendoredDir(modulePath)
+	if vendored {
+		moduleDir = vendoredModule.Dir
+	}
 
 	if moduleDir == "" {
 		mod = c.gomods.GetByPath(modulePath)
@@ -156,10 +169,18 @@ func (c *collector) add(owner Module, modulePath string) (Module, error) {
 		moduleDir += fileSeparator
 	}
 
+	version := zeroVersion
+	if vendored {
+		version = vendoredModule.Version
+	} else if mod != nil {
+		version = mod.Version
+	}
+
 	ma := &moduleAdapter{
-		dir:    moduleDir,
-		vendor: vendored,
-		gomod:  mod,
+		dir:     moduleDir,
+		vendor:  vendored,
+		gomod:   mod,
+		version: version,
 		// TODO(bep) mod when vendor the owner must point to the one with
 		// the _vendor dir?
 		owner: owner,
@@ -259,9 +280,10 @@ func (c *collector) collect() error {
 	}
 
 	projectMod := &moduleAdapter{
-		path:  path,
-		dir:   c.workingDir,
-		gomod: gomod,
+		path:    path,
+		dir:     c.workingDir,
+		version: gomod.Version,
+		gomod:   gomod,
 	}
 
 	for _, imp := range c.imports {
@@ -302,7 +324,10 @@ func (c *collector) collectModulesTXT(dir string) error {
 		}
 		path := parts[0]
 		if _, found := c.vendored[path]; !found {
-			c.vendored[path] = filepath.Join(vendorDir, path)
+			c.vendored[path] = vendoredModule{
+				Dir:     filepath.Join(vendorDir, path),
+				Version: parts[1],
+			}
 		}
 
 	}

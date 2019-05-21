@@ -56,7 +56,7 @@ type Module interface {
 	// Returns whether Dir points below the _vendor dir.
 	Vendor() bool
 
-	// The module version, "none" if not applicable.
+	// The module version.
 	Version() string
 }
 
@@ -71,6 +71,7 @@ type moduleAdapter struct {
 	gomod *goModule
 
 	// May be set for all.
+	version        string
 	vendor         bool
 	owner          Module
 	configFilename string
@@ -121,8 +122,5 @@ func (m *moduleAdapter) Vendor() bool {
 }
 
 func (m *moduleAdapter) Version() string {
-	if m.gomod != nil {
-		return m.gomod.Version
-	}
-	return "none"
+	return m.version
 }

@@ -201,9 +201,9 @@ func (m *Client) IsProbablyModule(path string) bool {
 	return m.GoModulesFilename != "" && strings.Contains(path, "/")
 }
 
-// Like Go, Hugo supports writing the dependencies to a /vendor folder.
+// Like Go, Hugo supports writing the dependencies to a /_vendor folder.
 // Unlike Go, we support it for any level.
-// We, by defaults, use the /vendor folder first, if found. To disable,
+// We, by defaults, use the /_vendor folder first, if found. To disable,
 // run with
 //    hugo --no-vendor TODO(bep) also on hugo mod
 //
@@ -531,7 +531,7 @@ func getGoProxy() string {
 func pathVersion(m Module) string {
 	versionStr := m.Version()
 	if m.Vendor() {
-		versionStr = "vendor"
+		versionStr += "+vendor"
 	}
 	if versionStr == "" {
 		return m.Path()
