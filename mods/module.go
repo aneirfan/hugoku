@@ -45,6 +45,9 @@ type Module interface {
 	// as a dependency.
 	Owner() Module
 
+	// Replaced by this module.
+	Replace() Module
+
 	// Returns the path to this module.
 	// This will either be the module path, e.g. "github.com/gohugoio/myshortcodes",
 	// or the path below your /theme folder, e.g. "mytheme".
@@ -93,6 +96,17 @@ func (m *moduleAdapter) IsGoMod() bool {
 
 func (m *moduleAdapter) Owner() Module {
 	return m.owner
+}
+
+func (m *moduleAdapter) Replace() Module {
+	if m.IsGoMod() && !m.Vendor() && m.gomod.Replace != nil {
+		return &moduleAdapter{
+			gomod: m.gomod.Replace,
+			owner: m.owner,
+			dir:   m.gomod.Replace.Dir,
+		}
+	}
+	return nil
 }
 
 func (m *moduleAdapter) Path() string {

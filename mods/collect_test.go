@@ -28,6 +28,8 @@ func TestPathKey(t *testing.T) {
 	}{
 		{"github.com/foo", "github.com/foo"},
 		{"github.com/foo/v2", "github.com/foo"},
+		{"github.com/foo/v12", "github.com/foo"},
+		{"github.com/foo/v3d", "github.com/foo/v3d"},
 		{"MyTheme", "mytheme"},
 	} {
 		assert.Equal(test.expect, pathKey(test.in))

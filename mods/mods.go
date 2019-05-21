@@ -122,8 +122,11 @@ func (m *Client) Graph(w io.Writer) error {
 		return err
 	}
 	for _, module := range mc.Modules {
-		// sourcegraph.com/sourcegraph/go-diff@v0.5.0 github.com/gogo/protobuf@v1.1.1
-		fmt.Fprintln(w, pathVersion(module.Owner())+" "+pathVersion(module))
+		dep := pathVersion(module.Owner()) + " " + pathVersion(module)
+		if replace := module.Replace(); replace != nil {
+			dep += " => " + replace.Dir()
+		}
+		fmt.Fprintln(w, dep)
 
 	}
 
