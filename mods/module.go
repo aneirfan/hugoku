@@ -63,19 +63,17 @@ type Module interface {
 type Modules []Module
 
 type moduleAdapter struct {
-	// Set if not a Go module.
-	path string
-	dir  string
+	path    string
+	dir     string
+	version string
+	vendor  bool
+	owner   Module
+
+	configFilename string
+	cfg            config.Provider
 
 	// Set if a Go module.
 	gomod *goModule
-
-	// May be set for all.
-	version        string
-	vendor         bool
-	owner          Module
-	configFilename string
-	cfg            config.Provider
 }
 
 func (m *moduleAdapter) Cfg() config.Provider {
@@ -88,7 +86,10 @@ func (m *moduleAdapter) ConfigFilename() string {
 
 func (m *moduleAdapter) Dir() string {
 	// This may point to the _vendor dir.
-	return m.dir
+	if !m.IsGoMod() || m.dir != "" {
+		return m.dir
+	}
+	return m.gomod.Dir
 }
 
 func (m *moduleAdapter) IsGoMod() bool {
@@ -104,17 +105,16 @@ func (m *moduleAdapter) Replace() Module {
 		return &moduleAdapter{
 			gomod: m.gomod.Replace,
 			owner: m.owner,
-			dir:   m.gomod.Replace.Dir,
 		}
 	}
 	return nil
 }
 
 func (m *moduleAdapter) Path() string {
-	if m.gomod != nil {
-		return m.gomod.Path
+	if !m.IsGoMod() || m.path != "" {
+		return m.path
 	}
-	return m.path
+	return m.gomod.Path
 }
 
 func (m *moduleAdapter) Vendor() bool {
@@ -122,5 +122,8 @@ func (m *moduleAdapter) Vendor() bool {
 }
 
 func (m *moduleAdapter) Version() string {
-	return m.version
+	if !m.IsGoMod() || m.version != "" {
+		return m.version
+	}
+	return m.gomod.Version
 }

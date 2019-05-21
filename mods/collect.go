@@ -169,11 +169,9 @@ func (c *collector) add(owner Module, modulePath string) (Module, error) {
 		moduleDir += fileSeparator
 	}
 
-	version := zeroVersion
+	var version string
 	if vendored {
 		version = vendoredModule.Version
-	} else if mod != nil {
-		version = mod.Version
 	}
 
 	ma := &moduleAdapter{
@@ -273,6 +271,7 @@ func (c *collector) collect() error {
 	}
 
 	// Create a pseudo module for the main project.
+	var version string
 	var path string
 	gomod := c.gomods.GetMain()
 	if gomod == nil {
@@ -282,7 +281,7 @@ func (c *collector) collect() error {
 	projectMod := &moduleAdapter{
 		path:    path,
 		dir:     c.workingDir,
-		version: gomod.Version,
+		version: version,
 		gomod:   gomod,
 	}
 
