@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rogpeppe/go-internal/module"
+
 	"github.com/pkg/errors"
 
 	"github.com/gohugoio/hugo/config"
@@ -90,12 +92,12 @@ func (c *collector) initModules() error {
 
 // TODO(bep) mod:
 // - no-vendor
-func (c *collector) isSeen(theme string) bool {
-	loki := strings.ToLower(theme)
-	if c.seen[loki] {
+func (c *collector) isSeen(path string) bool {
+	key := pathKey(path)
+	if c.seen[key] {
 		return true
 	}
-	c.seen[loki] = true
+	c.seen[key] = true
 	return false
 }
 
@@ -332,4 +334,13 @@ func (c *collector) wrapModuleNotFound(err error) error {
 
 	return err
 
+}
+
+// In the first iteration of Hugo Modules, we do not support multiple
+// major versions running at the same time, so we pick the first (upper most).
+// We will investigate namespaces in future versions.
+// TODO(bep) mod add a warning when the above happens.
+func pathKey(p string) string {
+	prefix, _, _ := module.SplitPathVersion(p)
+	return strings.ToLower(prefix)
 }

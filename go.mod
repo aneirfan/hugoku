@@ -38,6 +38,7 @@ require (
 	github.com/nicksnyder/go-i18n v1.10.0
 	github.com/olekukonko/tablewriter v0.0.0-20180506121414-d4647c9c7a84
 	github.com/pkg/errors v0.8.1
+	github.com/rogpeppe/go-internal v1.3.0
 	github.com/russross/blackfriday v1.5.2
 	github.com/sanity-io/litter v1.1.0
 	github.com/spf13/afero v1.2.2
