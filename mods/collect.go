@@ -81,6 +81,7 @@ type collector struct {
 }
 
 type vendoredModule struct {
+	Owner   Module
 	Dir     string
 	Version string
 }
@@ -117,16 +118,19 @@ const zeroVersion = ""
 func (c *collector) add(owner Module, modulePath string) (Module, error) {
 	var mod *goModule
 
-	if err := c.collectModulesTXT(owner.Dir()); err != nil {
+	if err := c.collectModulesTXT(owner); err != nil {
 		return nil, err
 	}
 
 	var moduleDir string
 
+	realOwner := owner
+
 	// Try _vendor first.
 	vendoredModule, vendored := c.getVendoredDir(modulePath)
 	if vendored {
 		moduleDir = vendoredModule.Dir
+		realOwner = vendoredModule.Owner
 	}
 
 	if moduleDir == "" {
@@ -179,9 +183,8 @@ func (c *collector) add(owner Module, modulePath string) (Module, error) {
 		vendor:  vendored,
 		gomod:   mod,
 		version: version,
-		// TODO(bep) mod when vendor the owner must point to the one with
-		// the _vendor dir?
-		owner: owner,
+		// This may be the owner of the _vendor dir
+		owner: realOwner,
 	}
 	if mod == nil {
 		ma.path = modulePath
@@ -294,8 +297,8 @@ func (c *collector) collect() error {
 	return nil
 }
 
-func (c *collector) collectModulesTXT(dir string) error {
-	vendorDir := filepath.Join(dir, vendord)
+func (c *collector) collectModulesTXT(owner Module) error {
+	vendorDir := filepath.Join(owner.Dir(), vendord)
 	filename := filepath.Join(vendorDir, vendorModulesFilename)
 
 	f, err := c.fs.Open(filename)
@@ -324,6 +327,7 @@ func (c *collector) collectModulesTXT(dir string) error {
 		path := parts[0]
 		if _, found := c.vendored[path]; !found {
 			c.vendored[path] = vendoredModule{
+				Owner:   owner,
 				Dir:     filepath.Join(vendorDir, path),
 				Version: parts[1],
 			}
